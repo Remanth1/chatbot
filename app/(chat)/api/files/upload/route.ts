@@ -3,19 +3,25 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { auth } from "@/app/(auth)/auth";
+import { getSupportedRagMediaType } from "@/lib/ai/rag";
 
 // Use Blob instead of File since File is not available in Node.js environment
 const FileSchema = z.object({
-  file: z
-    .instanceof(Blob)
-    .refine((file) => file.size <= 5 * 1024 * 1024, {
-      message: "File size should be less than 5MB",
-    })
-    // Update the file type based on the kind of files you want to accept
-    .refine((file) => ["image/jpeg", "image/png"].includes(file.type), {
-      message: "File type should be JPEG or PNG",
-    }),
+  file: z.instanceof(Blob).refine((file) => file.size <= 10 * 1024 * 1024, {
+    message: "File size should be less than 10MB",
+  }),
 });
+
+function getAllowedContentType(file: Blob, filename: string) {
+  if (["image/jpeg", "image/png"].includes(file.type)) {
+    return file.type;
+  }
+
+  return getSupportedRagMediaType({
+    mediaType: file.type,
+    filename,
+  });
+}
 
 export async function POST(request: Request) {
   const session = await auth();
@@ -48,11 +54,21 @@ export async function POST(request: Request) {
 
     // Get filename from formData since Blob doesn't have name property
     const filename = (formData.get("file") as File).name;
+    const contentType = getAllowedContentType(file, filename);
+
+    if (!contentType) {
+      return NextResponse.json(
+        { error: "File type should be JPEG, PNG, or a text-based document" },
+        { status: 400 }
+      );
+    }
+
     const fileBuffer = await file.arrayBuffer();
 
     try {
       const data = await put(`${filename}`, fileBuffer, {
         access: "public",
+        contentType,
       });
 
       return NextResponse.json(data);
